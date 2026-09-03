@@ -1,0 +1,344 @@
+---
+title: "Subject-level LMM — CF Properties + Bayes Factors"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    code_folding: show
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(emmeans)
+library(BayesFactor)
+```
+
+# Load data
+
+```{r load-data}
+data <- read.csv("/Users/federicacardillo/Desktop/PHD/AI_CFm/VFM_Plots/MCMC_CF_merged_manual_results.csv")
+
+# metadata.csv must have columns: Subject, Group, Age
+data <- data %>%
+  mutate(Subject = trimws(Subject)) %>%
+  filter(Target_ROI %in% c(2.0, 3.0), CF_eccentricity >= 0.5, CF_eccentricity <= 6.5, CF_variance_explained > 0.3) %>%
+  mutate(Area = ifelse(Target_ROI == 2.0, "V2", "V3")) %>%
+  left_join(read.csv("/Users/federicacardillo/Desktop/PHD/AI_CFm/VFM_Plots/metadata.csv"), by = "Subject") %>%
+  filter(!is.na(Age), !is.na(Group))
+```
+
+---
+
+# Part 1 — Resting State (RS1 + RS2): POAG vs HC
+
+```{r rs-prepare}
+rs_vertex <- data %>%
+  filter(Task %in% c("RS1", "RS2"),
+         Group %in% c("POAG", "HC")) %>%
+  mutate(Group = factor(Group, levels = c("HC", "POAG")),
+         Area  = factor(Area,  levels = c("V2", "V3")))
+
+# One log-median per subject x area
+rs <- rs_vertex %>%
+  group_by(Subject, Group, Area, Age) %>%
+  summarise(size = log(median(CF_size)), beta = log(median(CF_beta)), beta_unc = log(median(CF_beta_uncertainty)), size_unc = log(median(CF_size_uncertainty)), ecc = log(median(CF_eccentricity)), polar = log(median(CF_polar_angle)), .groups = "drop")
+
+rs %>% distinct(Subject, Group) %>% count(Group)
+```
+
+## RS — CF Size
+```{r rs-size}
+m_rs_size <- lmer(size ~ Group * Area + Age + (1 | Subject), data = rs, REML = FALSE, control = lmerControl(optimizer = "bobyqa"))
+anova(m_rs_size)
+emmeans(m_rs_size, pairwise ~ Group)
+```
+
+## RS — CF Beta
+```{r rs-beta}
+m_rs_beta <- lmer(beta ~ Group * Area + Age + (1 | Subject), data = rs, REML = FALSE, control = lmerControl(optimizer = "bobyqa"))
+anova(m_rs_beta)
+emmeans(m_rs_beta, pairwise ~ Group)
+```
+
+## RS — CF Beta Uncertainty
+```{r rs-beta-unc}
+m_rs_beta_unc <- lmer(beta_unc ~ Group * Area + Age + (1 | Subject), data = rs, REML = FALSE, control = lmerControl(optimizer = "bobyqa"))
+anova(m_rs_beta_unc)
+emmeans(m_rs_beta_unc, pairwise ~ Group)
+emmeans(m_rs_beta_unc, pairwise ~ Group | Area, adjust = "none")
+```
+
+## RS — CF Size Uncertainty
+```{r rs-size-unc}
+m_rs_size_unc <- lmer(size_unc ~ Group * Area + Age + (1 | Subject), data = rs %>% filter(is.finite(size_unc)), REML = FALSE, control = lmerControl(optimizer = "bobyqa"))
+anova(m_rs_size_unc)
+emmeans(m_rs_size_unc, pairwise ~ Group)
+```
+
+## RS — CF Eccentricity
+```{r rs-ecc}
+m_rs_ecc <- lmer(ecc ~ Group * Area + Age + (1 | Subject), data = rs, REML = FALSE, control = lmerControl(optimizer = "bobyqa"))
+anova(m_rs_ecc)
+emmeans(m_rs_ecc, pairwise ~ Group)
+```
+
+## RS — CF Polar Angle
+```{r rs-polar}
+m_rs_polar <- lmer(polar ~ Group * Area + Age + (1 | Subject), data = rs, REML = FALSE, control = lmerControl(optimizer = "bobyqa"))
+anova(m_rs_polar)
+emmeans(m_rs_polar, pairwise ~ Group)
+```
+
+## RS — Bayes Factors
+
+```{r rs-bf}
+# How many subjects per group (needed for ttest.tstat)
+n_hc   <- rs %>% filter(Group == "HC")   %>% distinct(Subject) %>% nrow()
+n_poag <- rs %>% filter(Group == "POAG") %>% distinct(Subject) %>% nrow()
+
+# ttest.tstat() takes the t-ratio from the LMM and returns log(BF10).
+# We exponentiate to get BF10, then invert for BF01.
+# BF01 > 3 = moderate evidence for no group difference.
+
+# CF Size
+pw_rs_size <- as.data.frame(pairs(emmeans(m_rs_size, ~ Group)))
+t_value    <- pw_rs_size$t.ratio[1]
+bf_size    <- ttest.tstat(t = abs(t_value), n1 = n_hc, n2 = n_poag, rscale = "medium")
+BF10_size  <- exp(as.numeric(bf_size)[1])
+BF01_size  <- 1 / BF10_size
+cat("CF Size         — BF10:", round(BF10_size, 3), "| BF01:", round(BF01_size, 3), "\n")
+
+# CF Beta
+pw_rs_beta <- as.data.frame(pairs(emmeans(m_rs_beta, ~ Group)))
+t_value    <- pw_rs_beta$t.ratio[1]
+bf_beta    <- ttest.tstat(t = abs(t_value), n1 = n_hc, n2 = n_poag, rscale = "medium")
+BF10_beta  <- exp(as.numeric(bf_beta)[1])
+BF01_beta  <- 1 / BF10_beta
+cat("CF Beta         — BF10:", round(BF10_beta, 3), "| BF01:", round(BF01_beta, 3), "\n")
+
+# CF Beta Uncertainty
+pw_rs_beta_unc <- as.data.frame(pairs(emmeans(m_rs_beta_unc, ~ Group)))
+t_value        <- pw_rs_beta_unc$t.ratio[1]
+bf_beta_unc    <- ttest.tstat(t = abs(t_value), n1 = n_hc, n2 = n_poag, rscale = "medium")
+BF10_beta_unc  <- exp(as.numeric(bf_beta_unc)[1])
+BF01_beta_unc  <- 1 / BF10_beta_unc
+cat("CF Beta Unc     — BF10:", round(BF10_beta_unc, 3), "| BF01:", round(BF01_beta_unc, 3), "\n")
+
+# CF Size Uncertainty
+pw_rs_size_unc <- as.data.frame(pairs(emmeans(m_rs_size_unc, ~ Group)))
+t_value        <- pw_rs_size_unc$t.ratio[1]
+bf_size_unc    <- ttest.tstat(t = abs(t_value), n1 = n_hc, n2 = n_poag, rscale = "medium")
+BF10_size_unc  <- exp(as.numeric(bf_size_unc)[1])
+BF01_size_unc  <- 1 / BF10_size_unc
+cat("CF Size Unc     — BF10:", round(BF10_size_unc, 3), "| BF01:", round(BF01_size_unc, 3), "\n")
+
+# CF Eccentricity
+pw_rs_ecc <- as.data.frame(pairs(emmeans(m_rs_ecc, ~ Group)))
+t_value   <- pw_rs_ecc$t.ratio[1]
+bf_ecc    <- ttest.tstat(t = abs(t_value), n1 = n_hc, n2 = n_poag, rscale = "medium")
+BF10_ecc  <- exp(as.numeric(bf_ecc)[1])
+BF01_ecc  <- 1 / BF10_ecc
+cat("CF Eccentricity — BF10:", round(BF10_ecc, 3), "| BF01:", round(BF01_ecc, 3), "\n")
+
+# CF Polar Angle
+pw_rs_polar <- as.data.frame(pairs(emmeans(m_rs_polar, ~ Group)))
+t_value     <- pw_rs_polar$t.ratio[1]
+bf_polar    <- ttest.tstat(t = abs(t_value), n1 = n_hc, n2 = n_poag, rscale = "medium")
+BF10_polar  <- exp(as.numeric(bf_polar)[1])
+BF01_polar  <- 1 / BF10_polar
+cat("CF Polar Angle  — BF10:", round(BF10_polar, 3), "| BF01:", round(BF01_polar, 3), "\n")
+```
+
+---
+
+# Part 2 — Retinotopy (RET + RET2): POAG vs HC vs HC-SS
+
+```{r ret-prepare}
+ret_vertex <- data %>%
+  filter(Task %in% c("RET", "RET2"),
+         Group %in% c("POAG", "HC", "HC-SS")) %>%
+  mutate(Group = factor(Group, levels = c("HC", "POAG", "HC-SS")),
+         Area  = factor(Area,  levels = c("V2", "V3")))
+
+ret <- ret_vertex %>%
+  group_by(Subject, Group, Area, Age) %>%
+  summarise(size = log(median(CF_size)), beta = log(median(CF_beta)), beta_unc = log(median(CF_beta_uncertainty)), size_unc = log(median(CF_size_uncertainty)), ecc = log(median(CF_eccentricity)), polar = log(median(CF_polar_angle)), .groups = "drop")
+
+ret %>% distinct(Subject, Group) %>% count(Group)
+```
+
+## RET — CF Size
+```{r ret-size}
+m_ret_size <- lmer(size ~ Group * Area + Age + (1 | Subject), data = ret, REML = FALSE, control = lmerControl(optimizer = "bobyqa"))
+anova(m_ret_size)
+emmeans(m_ret_size, pairwise ~ Group, adjust = "tukey")
+```
+
+## RET — CF Beta
+```{r ret-beta}
+m_ret_beta <- lmer(beta ~ Group * Area + Age + (1 | Subject), data = ret, REML = FALSE, control = lmerControl(optimizer = "bobyqa"))
+anova(m_ret_beta)
+emmeans(m_ret_beta, pairwise ~ Group, adjust = "tukey")
+```
+
+## RET — CF Beta Uncertainty
+```{r ret-beta-unc}
+m_ret_beta_unc <- lmer(beta_unc ~ Group * Area + Age + (1 | Subject), data = ret, REML = FALSE, control = lmerControl(optimizer = "bobyqa"))
+anova(m_ret_beta_unc)
+emmeans(m_ret_beta_unc, pairwise ~ Group, adjust = "tukey")
+```
+
+## RET — CF Size Uncertainty
+```{r ret-size-unc}
+m_ret_size_unc <- lmer(size_unc ~ Group * Area + Age + (1 | Subject), data = ret %>% filter(is.finite(size_unc)), REML = FALSE, control = lmerControl(optimizer = "bobyqa"))
+anova(m_ret_size_unc)
+emmeans(m_ret_size_unc, pairwise ~ Group, adjust = "tukey")
+```
+
+## RET — CF Eccentricity
+```{r ret-ecc}
+m_ret_ecc <- lmer(ecc ~ Group * Area + Age + (1 | Subject), data = ret, REML = FALSE, control = lmerControl(optimizer = "bobyqa"))
+anova(m_ret_ecc)
+emmeans(m_ret_ecc, pairwise ~ Group, adjust = "tukey")
+```
+
+## RET — CF Polar Angle
+```{r ret-polar}
+m_ret_polar <- lmer(polar ~ Group * Area + Age + (1 | Subject), data = ret, REML = FALSE, control = lmerControl(optimizer = "bobyqa"))
+anova(m_ret_polar)
+emmeans(m_ret_polar, pairwise ~ Group, adjust = "tukey")
+```
+
+## RET — Bayes Factors
+
+```{r ret-bf}
+# Sample sizes per group
+n_hc   <- ret %>% filter(Group == "HC")    %>% distinct(Subject) %>% nrow()
+n_poag <- ret %>% filter(Group == "POAG")  %>% distinct(Subject) %>% nrow()
+n_hcss <- ret %>% filter(Group == "HC-SS") %>% distinct(Subject) %>% nrow()
+
+# HC vs HC-SS is paired: the same control subjects did both RET and RET2.
+# Count how many subjects appear in both groups.
+hc_subjects   <- ret %>% filter(Group == "HC")    %>% distinct(Subject) %>% pull(Subject)
+hcss_subjects <- ret %>% filter(Group == "HC-SS") %>% distinct(Subject) %>% pull(Subject)
+n_pairs       <- length(intersect(hc_subjects, hcss_subjects))
+
+# emmeans always returns 3 rows for 3 groups (HC, POAG, HC-SS):
+#   row 1 = HC vs POAG
+#   row 2 = HC vs HC-SS
+#   row 3 = POAG vs HC-SS
+
+# CF Size
+pw_ret_size <- as.data.frame(pairs(emmeans(m_ret_size, ~ Group)))
+
+t_value       <- pw_ret_size$t.ratio[1]
+bf_ret_size_1 <- ttest.tstat(t = abs(t_value), n1 = n_hc,   n2 = n_poag, rscale = "medium")
+BF01          <- 1 / exp(as.numeric(bf_ret_size_1)[1])
+cat("CF Size — HC vs POAG    BF01:", round(BF01, 3), "\n")
+
+t_value       <- pw_ret_size$t.ratio[2]
+bf_ret_size_2 <- ttest.tstat(t = abs(t_value), n1 = n_pairs,              rscale = "medium")
+BF01          <- 1 / exp(as.numeric(bf_ret_size_2)[1])
+cat("CF Size — HC vs HC-SS   BF01:", round(BF01, 3), "[paired]\n")
+
+t_value       <- pw_ret_size$t.ratio[3]
+bf_ret_size_3 <- ttest.tstat(t = abs(t_value), n1 = n_poag, n2 = n_hcss, rscale = "medium")
+BF01          <- 1 / exp(as.numeric(bf_ret_size_3)[1])
+cat("CF Size — POAG vs HC-SS BF01:", round(BF01, 3), "\n")
+
+# CF Beta
+pw_ret_beta <- as.data.frame(pairs(emmeans(m_ret_beta, ~ Group)))
+
+t_value       <- pw_ret_beta$t.ratio[1]
+bf_ret_beta_1 <- ttest.tstat(t = abs(t_value), n1 = n_hc,   n2 = n_poag, rscale = "medium")
+BF01          <- 1 / exp(as.numeric(bf_ret_beta_1)[1])
+cat("CF Beta — HC vs POAG    BF01:", round(BF01, 3), "\n")
+
+t_value       <- pw_ret_beta$t.ratio[2]
+bf_ret_beta_2 <- ttest.tstat(t = abs(t_value), n1 = n_pairs,              rscale = "medium")
+BF01          <- 1 / exp(as.numeric(bf_ret_beta_2)[1])
+cat("CF Beta — HC vs HC-SS   BF01:", round(BF01, 3), "[paired]\n")
+
+t_value       <- pw_ret_beta$t.ratio[3]
+bf_ret_beta_3 <- ttest.tstat(t = abs(t_value), n1 = n_poag, n2 = n_hcss, rscale = "medium")
+BF01          <- 1 / exp(as.numeric(bf_ret_beta_3)[1])
+cat("CF Beta — POAG vs HC-SS BF01:", round(BF01, 3), "\n")
+
+# CF Beta Uncertainty
+pw_ret_beta_unc <- as.data.frame(pairs(emmeans(m_ret_beta_unc, ~ Group)))
+
+t_value       <- pw_ret_beta_unc$t.ratio[1]
+bf_ret_bunc_1 <- ttest.tstat(t = abs(t_value), n1 = n_hc,   n2 = n_poag, rscale = "medium")
+BF01          <- 1 / exp(as.numeric(bf_ret_bunc_1)[1])
+cat("CF Beta Unc — HC vs POAG    BF01:", round(BF01, 3), "\n")
+
+t_value       <- pw_ret_beta_unc$t.ratio[2]
+bf_ret_bunc_2 <- ttest.tstat(t = abs(t_value), n1 = n_pairs,              rscale = "medium")
+BF01          <- 1 / exp(as.numeric(bf_ret_bunc_2)[1])
+cat("CF Beta Unc — HC vs HC-SS   BF01:", round(BF01, 3), "[paired]\n")
+
+t_value       <- pw_ret_beta_unc$t.ratio[3]
+bf_ret_bunc_3 <- ttest.tstat(t = abs(t_value), n1 = n_poag, n2 = n_hcss, rscale = "medium")
+BF01          <- 1 / exp(as.numeric(bf_ret_bunc_3)[1])
+cat("CF Beta Unc — POAG vs HC-SS BF01:", round(BF01, 3), "\n")
+
+# CF Size Uncertainty
+pw_ret_size_unc <- as.data.frame(pairs(emmeans(m_ret_size_unc, ~ Group)))
+
+t_value       <- pw_ret_size_unc$t.ratio[1]
+bf_ret_sunc_1 <- ttest.tstat(t = abs(t_value), n1 = n_hc,   n2 = n_poag, rscale = "medium")
+BF01          <- 1 / exp(as.numeric(bf_ret_sunc_1)[1])
+cat("CF Size Unc — HC vs POAG    BF01:", round(BF01, 3), "\n")
+
+t_value       <- pw_ret_size_unc$t.ratio[2]
+bf_ret_sunc_2 <- ttest.tstat(t = abs(t_value), n1 = n_pairs,              rscale = "medium")
+BF01          <- 1 / exp(as.numeric(bf_ret_sunc_2)[1])
+cat("CF Size Unc — HC vs HC-SS   BF01:", round(BF01, 3), "[paired]\n")
+
+t_value       <- pw_ret_size_unc$t.ratio[3]
+bf_ret_sunc_3 <- ttest.tstat(t = abs(t_value), n1 = n_poag, n2 = n_hcss, rscale = "medium")
+BF01          <- 1 / exp(as.numeric(bf_ret_sunc_3)[1])
+cat("CF Size Unc — POAG vs HC-SS BF01:", round(BF01, 3), "\n")
+
+# CF Eccentricity
+pw_ret_ecc <- as.data.frame(pairs(emmeans(m_ret_ecc, ~ Group)))
+
+t_value      <- pw_ret_ecc$t.ratio[1]
+bf_ret_ecc_1 <- ttest.tstat(t = abs(t_value), n1 = n_hc,   n2 = n_poag, rscale = "medium")
+BF01         <- 1 / exp(as.numeric(bf_ret_ecc_1)[1])
+cat("CF Ecc — HC vs POAG    BF01:", round(BF01, 3), "\n")
+
+t_value      <- pw_ret_ecc$t.ratio[2]
+bf_ret_ecc_2 <- ttest.tstat(t = abs(t_value), n1 = n_pairs,              rscale = "medium")
+BF01         <- 1 / exp(as.numeric(bf_ret_ecc_2)[1])
+cat("CF Ecc — HC vs HC-SS   BF01:", round(BF01, 3), "[paired]\n")
+
+t_value      <- pw_ret_ecc$t.ratio[3]
+bf_ret_ecc_3 <- ttest.tstat(t = abs(t_value), n1 = n_poag, n2 = n_hcss, rscale = "medium")
+BF01         <- 1 / exp(as.numeric(bf_ret_ecc_3)[1])
+cat("CF Ecc — POAG vs HC-SS BF01:", round(BF01, 3), "\n")
+
+# CF Polar Angle
+pw_ret_polar <- as.data.frame(pairs(emmeans(m_ret_polar, ~ Group)))
+
+t_value        <- pw_ret_polar$t.ratio[1]
+bf_ret_polar_1 <- ttest.tstat(t = abs(t_value), n1 = n_hc,   n2 = n_poag, rscale = "medium")
+BF01           <- 1 / exp(as.numeric(bf_ret_polar_1)[1])
+cat("CF Polar — HC vs POAG    BF01:", round(BF01, 3), "\n")
+
+t_value        <- pw_ret_polar$t.ratio[2]
+bf_ret_polar_2 <- ttest.tstat(t = abs(t_value), n1 = n_pairs,              rscale = "medium")
+BF01           <- 1 / exp(as.numeric(bf_ret_polar_2)[1])
+cat("CF Polar — HC vs HC-SS   BF01:", round(BF01, 3), "[paired]\n")
+
+t_value        <- pw_ret_polar$t.ratio[3]
+bf_ret_polar_3 <- ttest.tstat(t = abs(t_value), n1 = n_poag, n2 = n_hcss, rscale = "medium")
+BF01           <- 1 / exp(as.numeric(bf_ret_polar_3)[1])
+cat("CF Polar — POAG vs HC-SS BF01:", round(BF01, 3), "\n")
+```
