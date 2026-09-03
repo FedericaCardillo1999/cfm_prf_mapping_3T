@@ -377,3 +377,7 @@ The R Markdown file takes those two files as input and runs the statistical anal
 ## Contributing
 
 This repository is licensed under the MIT License.
+
+## Citation
+
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22281651.svg)](https://doi.org/10.5281/zenodo.22281651)
